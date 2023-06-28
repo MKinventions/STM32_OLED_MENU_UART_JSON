@@ -1,0 +1,986 @@
+#include<EEPROM.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ArduinoJson.h>
+#include <SPI.h>              // include libraries
+#include <LoRa.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+/******LORA START*****************************************/
+#define csPin  PB8         // LoRa radio chip select
+#define resetPin PB9       // LoRa radio reset
+#define irqPin PB5         // change for your board; must be a hardware interrupt pin
+uint8_t msgCount = 0;            // count of outgoing messages
+uint8_t localAddress = 0xFF;     // address of this device
+uint8_t destination = 0xBB;      // destination to send to
+unsigned long previousMillisTX = 0;
+/******LORA END*****************************************/
+
+/********LORA RECEIVE start*********/
+int connectionStatus = 0;
+int rsi, snr;
+float tmp;
+int humi;
+int btn1Status,btn2Status,btn3Status,btn4Status;
+int pot1Status,pot2Status;
+/********LORA RECEIVE end*********/
+
+/************button controllers start****************************/
+int buttonState[5];
+int lastButton[5];
+int currentButton[5];
+int debounceDelay = 10;
+unsigned long previousMillis = 0;
+
+int button1State = 0;
+int button2State = 0;
+int button3State = 0;
+int button4State = 0;
+/************button controllers end*******************************/
+
+/************rotary encoder start*********************************/
+int currentStateCLK[3];
+int lastStateCLK[3];
+int encoder_counter[3];
+int encoder1_counter = 0;
+int encoder2_counter = 0;
+/************rotary encoder end**********************************/
+
+
+/*********controllers gpio pins start***********/
+#define voltSensor PA0
+#define potentiometer1 PB0
+#define potentiometer2 PB1
+#define joystick1 PA1
+#define joystick2 PA2
+#define joystick3 PA3
+#define joystick4 PA4
+#define joybutton1 PB10
+#define joybutton2 PB11
+#define encoder1_DT PB12
+#define encoder1_CLK PB13
+#define encoder1_btn PB3
+#define encoder2_DT PB14
+#define encoder2_CLK PB15
+#define encoder2_btn PB4
+/*********controllers gpio pins end***********/
+
+#define nextPageButton PC13
+#define MainMenuButton  PC14
+#define SubMenuButton  PC15
+int pagesCount = 0;
+int MainMenuSelect = 0;
+int SubMenuSelect = 0;
+
+uint8_t totalPages = 6;
+uint8_t totalMenus = 10;
+uint8_t totalSubMenus = 4;
+
+
+uint8_t pot1_address = 0x01;
+uint8_t pot2_address = 0x02;
+uint8_t pot3_address = 0x03;
+uint8_t pot4_address = 0x04;
+uint8_t joy1_address = 0x05;
+uint8_t joy2_address = 0x06;
+uint8_t joy3_address = 0x07;
+uint8_t joy4_address = 0x08;
+
+uint8_t pot1Dir_address = 0x09;
+uint8_t pot2Dir_address = 0x10;
+uint8_t pot3Dir_address = 0x11;
+uint8_t pot4Dir_address = 0x12;
+uint8_t joy1Dir_address = 0x13;
+uint8_t joy2Dir_address = 0x14;
+uint8_t joy3Dir_address = 0x15;
+uint8_t joy4Dir_address = 0x16;
+
+uint8_t pageCount_address = 0x17;
+
+uint8_t btn1Dir_address = 0x18;
+uint8_t btn2Dir_address = 0x19;
+uint8_t btn3Dir_address = 0x20;
+uint8_t btn4Dir_address = 0x21; 
+
+
+byte pot1_value, pot2_value, pot3_value, pot4_value, joy1_value, joy2_value, joy3_value, joy4_value;
+byte pot1Dir_value, pot2Dir_value, pot3Dir_value, pot4Dir_value, joy1Dir_value, joy2Dir_value, joy3Dir_value, joy4Dir_value;
+byte btn1Dir_value,btn2Dir_value,btn3Dir_value,btn4Dir_value;
+
+
+
+String pot1Dir_Type, pot2Dir_Type, pot3Dir_Type, pot4Dir_Type;
+String joy1Dir_Type, joy2Dir_Type, joy3Dir_Type, joy4Dir_Type;
+String btn1Dir_Type, btn2Dir_Type, btn3Dir_Type, btn4Dir_Type;
+
+
+
+void(* resetFunc) (void) = 0; //declare reset function @ address 0
+void lora_send_data();
+void onReceive(int packetSize); 
+void lora_init();
+
+int pot1cursor, pot2cursor, joy1cursor, joy2cursor, joy3cursor, joy4cursor;
+int pot1_level = 0;
+int pot2_level = 0;
+int joy1_level = 0;
+int joy2_level = 0;
+int joy3_level = 0;
+int joy4_level = 0;
+
+
+
+void setup() {
+  Wire.begin(); // join i2c bus (address optional for master)
+  Serial.begin(115200);
+
+  lora_init();
+  
+  pinMode(nextPageButton, INPUT_PULLUP);
+  pinMode(MainMenuButton, INPUT_PULLUP);
+  pinMode(SubMenuButton, INPUT_PULLUP);
+  pinMode(potentiometer1, INPUT);
+  pinMode(potentiometer2, INPUT);
+  pinMode(joystick1, INPUT);
+  pinMode(joystick2, INPUT);
+  pinMode(joystick3, INPUT);
+  pinMode(joystick4, INPUT); 
+  pinMode(joybutton1, INPUT_PULLUP);
+  pinMode(joybutton2, INPUT_PULLUP);
+  pinMode(encoder1_btn, INPUT_PULLUP);
+  pinMode(encoder2_btn, INPUT_PULLUP);  
+  pinMode(encoder1_CLK,INPUT_PULLUP);
+  pinMode(encoder1_DT,INPUT_PULLUP);
+  pinMode(encoder2_CLK,INPUT_PULLUP);
+  pinMode(encoder2_DT,INPUT_PULLUP);
+
+
+  
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(35, 30);
+  display.println("Restarted");
+  display.display();
+
+  pot1_value = EEPROM.read(pot1_address);//EEPROM.read(ADDRESS 0-255);
+  pot2_value = EEPROM.read(pot2_address);//EEPROM.read(ADDRESS 0-255);
+  pot3_value = EEPROM.read(pot3_address);//EEPROM.read(ADDRESS 0-255);
+  pot4_value = EEPROM.read(pot4_address);//EEPROM.read(ADDRESS 0-255);
+  joy1_value = EEPROM.read(joy1_address);//EEPROM.read(ADDRESS 0-255);
+  joy2_value = EEPROM.read(joy2_address);//EEPROM.read(ADDRESS 0-255);
+  joy3_value = EEPROM.read(joy3_address);//EEPROM.read(ADDRESS 0-255);
+  joy4_value = EEPROM.read(joy4_address);//EEPROM.read(ADDRESS 0-255);
+  pot1Dir_value = EEPROM.read(pot1Dir_address);//EEPROM.read(ADDRESS 0-255);
+  pot2Dir_value = EEPROM.read(pot2Dir_address);//EEPROM.read(ADDRESS 0-255);
+  pot3Dir_value = EEPROM.read(pot3Dir_address);//EEPROM.read(ADDRESS 0-255);
+  pot4Dir_value = EEPROM.read(pot4Dir_address);//EEPROM.read(ADDRESS 0-255);
+  joy1Dir_value = EEPROM.read(joy1Dir_address);//EEPROM.read(ADDRESS 0-255);
+  joy2Dir_value = EEPROM.read(joy2Dir_address);//EEPROM.read(ADDRESS 0-255);
+  joy3Dir_value = EEPROM.read(joy3Dir_address);//EEPROM.read(ADDRESS 0-255);
+  joy4Dir_value = EEPROM.read(joy4Dir_address);//EEPROM.read(ADDRESS 0-255); 
+
+  pagesCount = EEPROM.read(pageCount_address);//EEPROM.read(ADDRESS 0-255); 
+
+  btn1Dir_value = EEPROM.read(btn1Dir_address);//EEPROM.read(ADDRESS 0-255);
+  btn2Dir_value = EEPROM.read(btn2Dir_address);//EEPROM.read(ADDRESS 0-255);
+  btn3Dir_value = EEPROM.read(btn3Dir_address);//EEPROM.read(ADDRESS 0-255);
+  btn4Dir_value = EEPROM.read(btn4Dir_address);//EEPROM.read(ADDRESS 0-255);
+ }
+
+
+
+
+
+void loop() 
+{
+    lora_send_data();
+    onReceive(LoRa.parsePacket());
+  
+    pot1_level = adc_controller_dynamic_mapping(180, 0, potentiometer1);
+    pot2_level = adc_controller_dynamic_mapping(255, 1, potentiometer2);
+    joy1_level = adc_controller_dynamic_mapping(255, 0, joystick1);
+    joy2_level = adc_controller_dynamic_mapping(255, 1, joystick2);
+    joy3_level = adc_controller_dynamic_mapping(255, 0, joystick3);
+    joy4_level = adc_controller_dynamic_mapping(255, 1, joystick4);
+  
+    button1State = button_controller_status(joybutton1, 1, btn1Dir_value);
+    button2State = button_controller_status(joybutton2, 2, btn2Dir_value);
+    button3State = button_controller_status(encoder1_btn, 3, btn3Dir_value);
+    button4State = button_controller_status(encoder2_btn, 4, btn4Dir_value);
+
+//    encoder1_counter = rotary_encode_controller(encoder1_CLK, encoder1_DT, 1 , rot1_value, rot1Dir_value);
+//    encoder2_counter = rotary_encode_controller(encoder2_CLK, encoder2_DT, 2 , rot2_value, rot2Dir_value);
+
+    
+
+    if (digitalRead(nextPageButton) == LOW) {
+      pagesCount++;
+      if (pagesCount > 6) {
+        pagesCount = 0;
+      }
+    }
+
+    if (digitalRead(MainMenuButton) == LOW) {
+      MainMenuSelect++;
+      if (MainMenuSelect > 8) {
+        MainMenuSelect = 0;
+      }
+   }
+    
+    if (digitalRead(SubMenuButton) == LOW) {
+      SubMenuSelect++;
+      if (SubMenuSelect > 2) {
+        SubMenuSelect = 0;
+      }
+    }
+  
+//       resetFunc();  //call reset   
+  delay(100);
+
+//  Serial.println("PAGES:"+String(pagesCount));
+//  Serial.println("MENU:"+String(MainMenuSelect));
+//  Serial.println("SUBMENU:"+String(SubMenuSelect));
+  
+  pot1Dir_Type = (pot1Dir_value == 0)?"LFT":"RHT";
+  pot2Dir_Type = (pot2Dir_value == 0)?"LFT":"RHT";
+  pot3Dir_Type = (pot3Dir_value == 0)?"LFT":"RHT";
+  pot4Dir_Type = (pot4Dir_value == 0)?"LFT":"RHT";
+  joy1Dir_Type = (joy1Dir_value == 0)?"LFT":"RHT";
+  joy2Dir_Type = (joy2Dir_value == 0)?"LFT":"RHT";
+  joy3Dir_Type = (joy3Dir_value == 0)?"LFT":"RHT";
+  joy4Dir_Type = (joy4Dir_value == 0)?"LFT":"RHT";
+  btn1Dir_Type = (btn1Dir_value == 0)?"PUSH":"TOGGLE";
+  btn2Dir_Type = (btn2Dir_value == 0)?"PUSH":"TOGGLE";
+  btn3Dir_Type = (btn3Dir_value == 0)?"PUSH":"TOGGLE";
+  btn4Dir_Type = (btn4Dir_value == 0)?"PUSH":"TOGGLE";
+
+String connection = (connectionStatus == 0)?"Disconnected":"Connected"; 
+String btn1Type = (btn1Dir_value == 0)?"P":"T";
+String btn2Type = (btn2Dir_value == 0)?"P":"T";
+String btn3Type = (btn3Dir_value == 0)?"P":"T";
+String btn4Type = (btn4Dir_value == 0)?"P":"T";
+String pot1Type = (pot1Dir_value == 0)?"L":"R";
+String pot2Type = (pot2Dir_value == 0)?"L":"R";
+  
+ 
+  
+  switch(pagesCount){
+  
+    case 0:
+            EEPROM.write(pageCount_address, 0);
+            display.clearDisplay();
+            display.setTextColor(WHITE);
+            display.setTextSize(1);
+            display.setCursor(0, 0);//COL,ROW
+            display.println("DASHBOARD");
+            display.setCursor(110,0);display.print(String(pagesCount) + "/" + String(totalPages));
+            display.setCursor(0,12); display.print("STATUS:" + String(connection)); 
+            display.setCursor(0,21); display.print("TEMP:" + String(tmp));display.setCursor(60,21);display.print("  HUMI:" + String(humi)); 
+            display.setCursor(0,31); display.print("RSSI:" + String(rsi));display.setCursor(60,31);display.print("  SNR:" + String(snr)); 
+            display.setCursor(0,41); display.print("B1:" + String(button1State)+"["+ String(btn1Type)+"]"+String(btn1Status)); display.setCursor(60,41);display.print("| B2:" + String(button2State)+"["+ String(btn2Type)+"]"+String(btn2Status)); 
+            display.setCursor(0,51); display.print("B3:" + String(button3State)+"["+ String(btn3Type)+"]"+String(btn3Status)); display.setCursor(60,51);display.print("| B4:" + String(button4State)+"["+ String(btn4Type)+"]"+String(btn4Status)); 
+          break;
+  
+    case 1:
+          EEPROM.write(pageCount_address, 1);
+          potentiometer();
+          break;
+          
+    case 2:
+          EEPROM.write(pageCount_address, 2);
+          potentiometer_settings();   
+          break;
+    
+    case 3:
+          EEPROM.write(pageCount_address, 3);
+          page_settings("BUTTONS", "BUTTON1", "BUTTON2", "BUTTON3", "BUTTON4", btn1Dir_Type, btn2Dir_Type, btn3Dir_Type, btn4Dir_Type, "PUSH", "TOGGLE",
+          btn1Dir_address, btn2Dir_address, btn3Dir_address, btn4Dir_address, 0, 1);
+          break;      
+    case 4:
+          EEPROM.write(pageCount_address, 4);
+            display.clearDisplay();
+            display.setTextColor(WHITE);
+            display.setTextSize(1);
+            display.setCursor(0, 0);//COL,ROW
+            display.println("POTENTIOMETER");
+            display.setCursor(110,0);display.print(String(pagesCount) + "/" + String(totalPages));
+            display.setCursor(0,10); display.print("POT1:"+String(pot1Type)+" "+String(pot1_level));display.setCursor(60,10);display.print(" ["+ String(pot1Status)+"]");
+            display.setCursor(0,20); display.print("POT2:"+String(pot2Type)+" "+String(pot2_level));display.setCursor(60,20);display.print(" ["+ String(pot2Status)+"]"); 
+            display.setCursor(0,30); display.print("ENC1:" + String(encoder1_counter)); display.setCursor(60,30);display.print("| ENC2:" + String(encoder2_counter)); 
+
+            pot1cursor = adc_controller_cursor_position(pot1_value, pot1Dir_value, pot1_level);
+            pot2cursor = adc_controller_cursor_position(pot2_value, pot2Dir_value, pot2_level);
+            display.setCursor(pot1cursor,45); display.print("*");
+            display.setCursor(0,45);display.print("---------------------");
+            display.setCursor(pot2cursor,55); display.print("*");
+            display.setCursor(0,55);display.print("---------------------");
+          break;
+    case 5:
+          EEPROM.write(pageCount_address, 5);
+            display.clearDisplay();
+            display.setTextColor(WHITE);
+            display.setTextSize(1);
+            display.setCursor(0, 0);//COL,ROW
+            display.println("JOYSTICKS");
+            display.setCursor(110,0);display.print(String(pagesCount) + "/" + String(totalPages));
+            display.setCursor(0,10); display.print("JOY1:" + String(joy1_level));display.setCursor(60,12);display.print("| JOY2:" + String(joy2_level)); 
+            display.setCursor(0,20); display.print("JOY3:" + String(joy3_level));display.setCursor(60,21);display.print("| JOY4:" + String(joy4_level)); 
+
+            joy1cursor = adc_controller_cursor_position(joy1_value, joy1Dir_value, joy1_level);
+            joy2cursor = adc_controller_cursor_position(joy2_value, joy2Dir_value, joy2_level);
+            joy3cursor = adc_controller_cursor_position(joy3_value, joy3Dir_value, joy3_level);
+            joy4cursor = adc_controller_cursor_position(joy4_value, joy4Dir_value, joy4_level);
+            display.setCursor(joy1cursor,30); display.print("*");
+            display.setCursor(0,30);display.print("---------------------");
+            display.setCursor(joy2cursor,39); display.print("*");
+            display.setCursor(0,39);display.print("---------------------");
+            display.setCursor(joy3cursor,48); display.print("*");
+            display.setCursor(0,48);display.print("---------------------");
+            display.setCursor(joy4cursor,57); display.print("*");
+            display.setCursor(0,57);display.print("---------------------");
+          break;
+//    case 6:
+//          EEPROM.write(pageCount_address, 6);
+//          settings();
+//          break;                     
+  }
+  display.display();
+}
+
+void lora_send_data(){
+
+  String SendJSONData;
+
+  
+    StaticJsonDocument<512> LORA_TX;
+//DynamicJsonDocument LORA_TX(200);
+
+   JsonArray button = LORA_TX.createNestedArray("btn");
+    button.add(button1State);
+    button.add(button2State);
+    button.add(button3State);
+    button.add(button4State);
+            
+    JsonArray potentiometers = LORA_TX.createNestedArray("pot");
+    potentiometers.add(pot1_level);
+    potentiometers.add(pot2_level);
+    
+    JsonArray joysticks = LORA_TX.createNestedArray("joy");
+    joysticks.add(joy1_level);
+    joysticks.add(joy2_level);
+    joysticks.add(joy3_level);
+    joysticks.add(joy4_level);    
+
+    JsonArray rotaryEncoder = LORA_TX.createNestedArray("rot");
+    rotaryEncoder.add(encoder1_counter);
+    rotaryEncoder.add(encoder2_counter);
+       
+
+serializeJson(LORA_TX, SendJSONData);
+//serializeJsonPretty(LORA_TX, SendJSONData);
+
+
+  unsigned long currentMillisTX = millis();
+  if (currentMillisTX - previousMillisTX >= 500) {
+    previousMillisTX = currentMillisTX;
+      Serial.println("Sending " + SendJSONData); 
+      LoRa.beginPacket();                   // start packet
+      LoRa.write(destination);              // add destination address
+      LoRa.write(localAddress);             // add sender address
+      LoRa.write(msgCount);                 // add message ID
+      LoRa.write(SendJSONData.length());    // add payload length
+      LoRa.print(SendJSONData);             // add payload
+      LoRa.endPacket();                     // finish packet and send it
+      msgCount++;                           // increment message ID
+      }  
+}
+
+void onReceive(int packetSize) {
+  if (packetSize == 0) return;          // if there's no packet, return
+
+  // read packet header bytes:
+  int recipient = LoRa.read();          // recipient address
+  byte sender = LoRa.read();            // sender address
+  byte incomingMsgId = LoRa.read();     // incoming msg ID
+  byte incomingLength = LoRa.read();    // incoming msg length
+
+  String incoming = "";
+
+  while (LoRa.available()) {
+    incoming += (char)LoRa.read();
+    connectionStatus = 1;
+  }
+
+  if (incomingLength != incoming.length()) {   // check length for error
+    Serial.println("error: message length does not match length");
+    return;                             // skip rest of function
+  }
+
+  // if the recipient isn't this device or broadcast,
+  if (recipient != localAddress && recipient != 0xBB) {
+    Serial.println("This message is not for me.");
+    return;                             // skip rest of function
+  }
+
+
+StaticJsonDocument<512> LORA_RX;
+  DeserializationError error = deserializeJson(LORA_RX, incoming);
+
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  rsi = LORA_RX["rssi"];
+  snr = LORA_RX["snr"];
+  tmp = LORA_RX["temp"];
+  humi = LORA_RX["humi"];
+  btn1Status = LORA_RX["btnState"][0];
+  btn2Status = LORA_RX["btnState"][1];
+  btn3Status = LORA_RX["btnState"][2];
+  btn4Status = LORA_RX["btnState"][3];
+  pot1Status = LORA_RX["potState"][0];
+  pot2Status = LORA_RX["potState"][1];
+  
+  // if message is for this device, or broadcast, print details:
+  Serial.print("Received from: 0x" + String(sender, HEX));
+  Serial.print(", Sent to: 0x" + String(recipient, HEX));
+  Serial.print(", Message ID: " + String(incomingMsgId));
+  Serial.print(", Message length: " + String(incomingLength));
+  Serial.print(", RSSI: " + String(LoRa.packetRssi()));
+  Serial.println(", Snr: " + String(LoRa.packetSnr()));
+  Serial.println("Incoming Message: " + incoming);
+  Serial.println(); 
+}
+
+void lora_init(){
+  Serial.println("LoRa Duplex");
+
+  // override the default CS, reset, and IRQ pins (optional)
+  LoRa.setPins(csPin, resetPin, irqPin);// set CS, reset, IRQ pin
+
+  if (!LoRa.begin(433E6)) {             // initialize ratio at 915 MHz
+    Serial.println("LoRa init failed. Check your connections.");
+    while (true);                       // if failed, do nothing
+  }
+
+  Serial.println("LoRa init succeeded.");
+}
+
+
+void potentiometer(){
+          display.clearDisplay();
+          display.setTextColor(WHITE);
+          display.setTextSize(1);
+          display.setCursor(0, 0);//COL,ROW
+          display.println("POTENTIOMETER");
+          display.setCursor(110,0);display.print(String(pagesCount) + "/" + String(totalPages));
+
+          display.setCursor(0,12); display.print(" POT1:" + String(pot1_value) + " | "); display.setCursor(70,12);display.print(" JOY1:" + String(joy1_value));   
+          display.setCursor(0,21); display.print(" POT2:" + String(pot2_value) + " | "); display.setCursor(70,21);display.print(" JOY2:" + String(joy2_value)); 
+          display.setCursor(0,31); display.print(" POT3:" + String(pot3_value) + " | "); display.setCursor(70,31);display.print(" JOY3:" + String(joy3_value)); 
+          display.setCursor(0,41); display.print(" POT4:" + String(pot4_value) + " | "); display.setCursor(70,41);display.print(" JOY4:" + String(joy4_value)); 
+
+            switch(MainMenuSelect){
+            case 0:
+                  display.setCursor(0,55);display.print("Press To Select Menu");
+                  break;       
+            case 1:
+                  display.setCursor(0,12); display.print(">POT1:" + String(pot1_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(pot1_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(pot1_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;                   
+            case 2:
+                  display.setCursor(0,21); display.print(">POT2:" + String(pot2_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(pot2_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(pot2_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;  
+            case 3:
+                  display.setCursor(0,31); display.print(">POT3:" + String(pot3_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(pot3_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(pot3_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;  
+            case 4:
+                  display.setCursor(0,41); display.print(">POT4:" + String(pot4_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(pot4_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(pot4_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;  
+
+
+            case 5:
+                  display.setCursor(70,12); display.print(">JOY1:" + String(joy1_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(joy1_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(joy1_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;                   
+
+            case 6:
+                  display.setCursor(70,21); display.print(">JOY2:" + String(joy2_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(joy2_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(joy2_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;   
+            case 7:
+                  display.setCursor(70,31); display.print(">JOY3:" + String(joy3_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(joy3_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(joy3_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;   
+            case 8:
+                  display.setCursor(70,41); display.print(">JOY4:" + String(joy4_value));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(30,55);display.print("  180  255");
+                                break;
+                         case 1:
+                                EEPROM.write(joy4_address, 180);
+                                display.setCursor(30,55);display.print(" >180  255");
+                                break;
+                         case 2:
+                                EEPROM.write(joy4_address, 255);
+                                display.setCursor(30,55);display.print("  180 >255");
+                                break;     
+                  }  
+                  break;                                 
+            case 9:
+                  MainMenuSelect = 0;
+                  break;                         
+                  }
+        display.display(); 
+     
+}
+
+void potentiometer_settings(){
+          display.clearDisplay();
+          display.setTextColor(WHITE);
+          display.setTextSize(1);
+          display.setCursor(0, 0);//COL,ROW
+          display.println("POT SETTINGS");
+          display.setCursor(110,0);display.print(String(pagesCount) + "/" + String(totalPages));
+
+          display.setCursor(0,12); display.print(" POT1:" + String(pot1Dir_Type) + " | "); display.setCursor(70,12);display.print(" JOY1:" + String(joy1Dir_Type));   
+          display.setCursor(0,21); display.print(" POT2:" + String(pot2Dir_Type) + " | "); display.setCursor(70,21);display.print(" JOY2:" + String(joy2Dir_Type)); 
+          display.setCursor(0,31); display.print(" POT3:" + String(pot3Dir_Type) + " | "); display.setCursor(70,31);display.print(" JOY3:" + String(joy3Dir_Type)); 
+          display.setCursor(0,41); display.print(" POT4:" + String(pot4Dir_Type) + " | "); display.setCursor(70,41);display.print(" JOY4:" + String(joy4Dir_Type)); 
+
+            switch(MainMenuSelect){
+            case 0:
+                  display.setCursor(0,55);display.print("Press To Select Menu");
+                  break;       
+            case 1:
+                  display.setCursor(0,12); display.print(">POT1:" + String(pot1Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(pot1Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(pot1Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;                   
+            case 2:
+                  display.setCursor(0,21); display.print(">POT2:" + String(pot2Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(pot2Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(pot2Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;    
+            case 3:
+                  display.setCursor(0,31); display.print(">POT3:" + String(pot3Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(pot3Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(pot3Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;   
+            case 4:
+                  display.setCursor(0,41); display.print(">POT4:" + String(pot4Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(pot4Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(pot4Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;   
+            case 5:
+                  display.setCursor(70,12); display.print(">JOY1:" + String(joy1Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(joy1Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(joy1Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;   
+            case 6:
+                  display.setCursor(70,21); display.print(">JOY2:" + String(joy2Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(joy2Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(joy2Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;  
+            case 7:
+                  display.setCursor(70,31); display.print(">JOY3:" + String(joy3Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(joy3Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(joy3Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;  
+            case 8:
+                  display.setCursor(70,41); display.print(">JOY4:" + String(joy4Dir_Type));
+                  switch(SubMenuSelect){
+                         case 0:
+                                display.setCursor(20,55);display.print("  LEFT  RIGHT");
+                                break;
+                         case 1:
+                                EEPROM.write(joy4Dir_address, 0);
+                                display.setCursor(20,55);display.print(" >LEFT  RIGHT");
+                                break;
+                         case 2:
+                                EEPROM.write(joy4Dir_address, 1);
+                                display.setCursor(20,55);display.print("  LEFT >RIGHT");
+                                break;     
+                  }  
+                  break;  
+                                                                              
+            case 9:
+                  MainMenuSelect = 0;
+                  break;                         
+                  }
+        display.display(); 
+     
+}
+
+
+void page_settings(String pageName, String menu1, String menu2, String menu3, String menu4, String btn1Dir, String btn2Dir, String btn3Dir, 
+String btn4Dir, String btnType1, String btnType2, int addr1, int addr2, int addr3, int addr4, int addrValue1, int addrValue2){
+          display.clearDisplay();
+          display.setTextColor(WHITE);
+          display.setTextSize(1);
+          display.setCursor(0, 0);//COL,ROW
+          display.println(pageName);
+          display.setCursor(110,0);display.print(String(pagesCount) + "/" + String(totalPages));
+          
+          display.setCursor(0,12);display.print(" "+String(menu1) + ":" + String(btn1Dir));
+          display.setCursor(0,21);display.print(" "+String(menu2) + ":" + String(btn2Dir));   
+          display.setCursor(0,31);display.print(" "+String(menu3) + ":" + String(btn3Dir));
+          display.setCursor(0,41);display.print(" "+String(menu4) + ":" + String(btn4Dir)); 
+
+           switch(MainMenuSelect){
+            case 0:
+                  display.setCursor(0,55);display.print("Please Select Menu");
+                  break;          
+              
+          case 1:
+                 display.setCursor(0,12); display.print(">"+String(menu1)+ ":" + String(btn1Dir));
+                 switch(SubMenuSelect){
+                     case 0:
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 1:
+                            EEPROM.write(addr1, addrValue1);
+                            display.setCursor(10,55);display.print(" >"+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 2:
+                            EEPROM.write(addr1, addrValue2);
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print(" >"+String(btnType2));
+                            break;
+                     case 3:
+                           SubMenuSelect = 0;
+                           break;           
+              }  
+              break;                   
+        case 2:
+              display.setCursor(0,21); display.print(">"+String(menu2)+ ":" + String(btn2Dir));
+              switch(SubMenuSelect){
+                     case 0:
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 1:
+                            EEPROM.write(addr2, addrValue1);
+                            display.setCursor(10,55);display.print(" >"+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 2:
+                            EEPROM.write(addr2, addrValue2);
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print(" >"+String(btnType2));
+                            break;     
+                     case 3:
+                           SubMenuSelect = 0;
+                           break; 
+              }   
+              break;  
+        case 3:
+              display.setCursor(0,31); display.print(">"+String(menu3)+ ":" + String(btn3Dir));
+              switch(SubMenuSelect){
+                     case 0:
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 1:
+                            EEPROM.write(addr3, addrValue1);
+                            display.setCursor(10,55);display.print(" >"+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 2:
+                            EEPROM.write(addr3, addrValue2);
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print(" >"+String(btnType2));
+                            break;     
+                     case 3:
+                           SubMenuSelect = 0;
+                           break; 
+              }  
+              break;                    
+        case 4:
+              display.setCursor(0,41); display.print(">"+String(menu4)+ ":" + String(btn4Dir));
+              switch(SubMenuSelect){
+                     case 0:
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 1:
+                            EEPROM.write(addr4, addrValue1);
+                            display.setCursor(10,55);display.print(" >"+String(btnType1));display.setCursor(55,55);display.print("  "+String(btnType2));
+                            break;
+                     case 2:
+                            EEPROM.write(addr4, addrValue2);
+                            display.setCursor(10,55);display.print("  "+String(btnType1));display.setCursor(55,55);display.print(" >"+String(btnType2));
+                            break;     
+                     case 3:
+                           SubMenuSelect = 0;
+                           break; 
+              }   
+              break;                    
+                       
+         case 5:
+                  MainMenuSelect = 0;
+                  break;   
+              } 
+        display.display();        
+}
+
+
+
+/*************POTENTIOMETERS & jOYSTICKS CONTROL TYPE AND DIRECTIOMN*******************************/
+uint16_t adc_controller_dynamic_mapping(uint8_t potValue, uint8_t potDirection, uint8_t potGpioPin){ 
+  uint8_t controller = 0;
+  uint16_t potReadValue = analogRead(potGpioPin); 
+       if(potValue == 180 & potDirection == 0){ controller = map(potReadValue, 0, 4095, 0, 180);}
+  else if(potValue == 180 & potDirection == 1){ controller = map(potReadValue, 0, 4095, 180, 0);}
+  else if(potValue == 255 & potDirection == 0){ controller = map(potReadValue, 0, 4095, 0, 255);}
+  else if(potValue == 255 & potDirection == 1){ controller = map(potReadValue, 0, 4095, 255, 0);}
+return controller;
+}
+
+/************POTENTIOMETERS & JOYSTICKS CURSOR POSITION CONTROLLER*********************************/
+uint16_t adc_controller_cursor_position(uint8_t value, uint8_t directionValue, uint8_t gpioLevel){
+    uint8_t cursorPosition; 
+       if(value == 180 & directionValue == 0){ cursorPosition = map(gpioLevel, 180, 0, 0, 120);}
+  else if(value == 180 & directionValue == 1){ cursorPosition = map(gpioLevel, 180, 0, 120, 0);}
+  else if(value == 255 & directionValue == 0){ cursorPosition = map(gpioLevel, 255, 0, 0, 120);}
+  else if(value == 255 & directionValue == 1){ cursorPosition = map(gpioLevel, 255, 0, 120, 0);}
+return cursorPosition;
+}
+
+/***********PUSH BUTTON AND TOGGLE BUTTON CONTROLLER**********************************************/
+uint16_t button_controller_status(uint8_t buttonGpioPin, uint8_t buttonIndex, uint8_t buttonType) {
+  if (buttonType == 1) {
+    unsigned long currentMillis = millis();
+    if(currentMillis - previousMillis >= debounceDelay){
+    currentButton[buttonIndex] = digitalRead(buttonGpioPin);
+    if (currentButton[buttonIndex] != lastButton[buttonIndex]) {
+      lastButton[buttonIndex] = currentButton[buttonIndex];
+               previousMillis = currentMillis;
+      
+      if (lastButton[buttonIndex] == 0) {
+        buttonState[buttonIndex] = (buttonState[buttonIndex] == 0) ? 1 : 0;
+      }
+    }
+    }
+  } else if (buttonType == 0) {
+    buttonState[buttonIndex] = digitalRead(buttonGpioPin);
+  }
+  return buttonState[buttonIndex];
+}
+
+/************ROTARY ENCODER***********************************************************************/
+uint16_t rotary_encode_controller(uint16_t encoderCLK, uint16_t encoderDT,uint8_t index,uint16_t rotaryValue, uint8_t rotaryDirection){
+  if(rotaryDirection == 0){
+  // Read the current state of CLK
+    currentStateCLK[index] = digitalRead(encoderCLK);  
+      if (currentStateCLK[index] != lastStateCLK[index]  && currentStateCLK[index] == 1){
+          if (digitalRead(encoderDT) != currentStateCLK[index]) {
+            encoder_counter[index] --;
+          } else {
+            // Encoder is rotating CW so increment
+            encoder_counter[index] ++;
+          }
+        }
+
+  if(encoder_counter[index] < 0){
+    encoder_counter[index] = 0;
+  }
+  if(encoder_counter[index] > rotaryValue){
+    encoder_counter[index] = rotaryValue;
+  }
+        // Remember last CLK state
+        lastStateCLK[index] = currentStateCLK[index];
+  }
+
+  else if(rotaryDirection == 1){
+  // Read the current state of CLK
+    currentStateCLK[index] = digitalRead(encoderCLK);  
+      if (currentStateCLK[index] != lastStateCLK[index]  && currentStateCLK[index] == 1){
+          if (digitalRead(encoderDT) != currentStateCLK[index]) {
+            encoder_counter[index] ++;
+          } else {
+            // Encoder is rotating CW so increment
+            encoder_counter[index] --;
+          }
+        }
+
+  if(encoder_counter[index] < 0){
+    encoder_counter[index] = 0;
+  }
+  if(encoder_counter[index] > rotaryValue){
+    encoder_counter[index] = rotaryValue;
+  }
+        // Remember last CLK state
+        lastStateCLK[index] = currentStateCLK[index];
+  }
+
+  return encoder_counter[index];
+}
