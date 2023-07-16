@@ -5,13 +5,7 @@
 #include <SPI.h>              // include libraries
 #include <LoRa.h>
 #include <ArduinoJson.h>
-
-//NRF24L01*********************
-#include <nRF24L01.h>
-#include <RF24.h>
-RF24 radio(PA11, PA12); // CE, CSN=>STM32
-const byte address[6] = "12345";
-
+#include <Servo.h>
 
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
@@ -68,13 +62,22 @@ byte sendData_value = 0;
 String receiverMode_Type;
 String sendData_Type;
 
-#define LED1 PC13 //32
-#define LED2 PC14 //33
+#define LED1 PC13
+#define LED2 PC14
+#define LED3 PC15
+#define LED4 PA0
 #define IN1 PB12
 #define IN2 PB13
 #define IN3 PB14
 #define IN4 PB15
+#define LEFT_SERVO PA1
+#define RIGHT_SERVO PA2
 
+Servo myservo1;
+Servo myservo2;
+
+
+//LORA***********************
 const int csPin = PB8;          // LoRa radio chip select
 const int resetPin = PB9;       // LoRa radio reset
 const int irqPin = PB5;         // change for your board; must be a hardware interrupt pin
@@ -83,6 +86,12 @@ byte localAddress = 0xBB;     // address of this device
 byte destination = 0xFF;      // destination to send to
 long lastSendTime = 0;        // last send time
 unsigned long previousMillisTX = 0;
+
+//NRF24L01*********************
+#include <nRF24L01.h>
+#include <RF24.h>
+RF24 radio(PA11, PA12); // CE, CSN=>STM32
+const byte address[6] = "12345";
 
 
 
@@ -94,7 +103,6 @@ unsigned long previousMillisTX = 0;
   int btn2_state;
   int btn3_state;
   int btn4_state;
-
 
   int joy1 = 0;
   int joy2 = 0;
@@ -119,10 +127,14 @@ void setup() {
 
   pinMode(LED1, OUTPUT);
   pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+  pinMode(LED4, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+  myservo1.attach(LEFT_SERVO);
+  myservo2.attach(RIGHT_SERVO);
   
 lora_init();
 NRF24L01_init();
@@ -360,7 +372,7 @@ StaticJsonDocument<512> LORA_RX;
   pot2 = LORA_RX["TXdata"][5];  
   joy1 = LORA_RX["TXdata"][6];
   joy2 = LORA_RX["TXdata"][7];
-   rot = LORA_RX["TXdata"][8];
+  rot = LORA_RX["TXdata"][8];
   servo1 = LORA_RX["TXdata"][9];
   servo2 = LORA_RX["TXdata"][10];
 
@@ -370,11 +382,13 @@ if(btn1 == 0){ btn1_state = 1; digitalWrite(LED1, LOW);}
 if(btn2 == 1){ btn2_state = 0; digitalWrite(LED2, HIGH);}
 if(btn2 == 0){ btn2_state = 1; digitalWrite(LED2, LOW);}
 
-if(btn3 == 1){ btn3_state = 0;}
-if(btn3 == 0){ btn3_state = 1;}
 
-if(btn4 == 1){ btn4_state = 0;}
-if(btn4 == 0){ btn4_state = 1;}
+
+if(btn3 == 1){ btn3_state = 0; digitalWrite(LED3, HIGH);}
+if(btn3 == 0){ btn3_state = 1; digitalWrite(LED3, LOW);}
+
+if(btn4 == 1){ btn4_state = 0; digitalWrite(LED4, HIGH);}
+if(btn4 == 0){ btn4_state = 1; digitalWrite(LED4, LOW);}
 
 btn1_state = (btn1_state == 1)?0:1;
 btn2_state = (btn2_state == 1)?0:1;
@@ -382,13 +396,12 @@ btn3_state = (btn3_state == 1)?0:1;
 btn4_state = (btn4_state == 1)?0:1;
 pot1_state = pot1;
 pot2_state = pot2;
-
-
-////myservo1.write(joyx);
-////myservo2.write(joyy);
 joyx_state = joy1;
 joyy_state = joy2;
 
+
+myservo1.write(pot1);
+myservo2.write(pot2);
 
 
 if(joy1 > 180){
